@@ -30,6 +30,12 @@ async function run() {
 
     const courseCollection = client.db('courseDB').collection('courses')
 
+    //Get operation
+    app.get('/courses', async(req, res)=> {
+      const cursor = courseCollection.find();
+      const result = await cursor.toArray();
+      res.send(result);
+    })
 
     //POST operation
     app.post('/courses', async(req, res)=> {
