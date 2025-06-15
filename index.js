@@ -29,6 +29,7 @@ async function run() {
     // await client.connect();
 
     const courseCollection = client.db("courseDB").collection("courses");
+    const enrollmentCollection = client.db("courseDB").collection("enrollments");
 
     app.get("/courses", async (req, res) => {
       const { creatorEmail } = req.query;
@@ -59,6 +60,25 @@ async function run() {
       }
     });
 
+    app.get("/enrollments", async (req, res) => {
+      const email = req.query.email;
+      if (!email) return res.status(400).send({ message: "Email is required" });
+
+      const enrollments = await enrollmentCollection
+        .find({ userEmail: email })
+        .toArray();
+      res.send(enrollments);
+    });
+
+    // Delete
+    app.delete("/enrollments/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await enrollmentCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
+      res.send(result);
+    });
+
     app.post("/courses", async (req, res) => {
       const newCourse = req.body;
       console.log("Received course:", newCourse);
@@ -67,20 +87,40 @@ async function run() {
       res.send({ insertedId: result.insertedId });
     });
 
+    app.post("/enrollments", async (req, res) => {
+      const enrollment = req.body;
+      console.log("Received enrollment:", enrollment);
+
+      if (
+        !enrollment.userEmail ||
+        !enrollment.courseId ||
+        !enrollment.courseName
+      ) {
+        return res.status(400).send({ message: "Missing required fields" });
+      }
+
+      enrollment.enrolledDate = new Date(); // Set enrollment date
+      const result = await enrollmentCollection.insertOne(enrollment);
+      res.send({ insertedId: result.insertedId });
+    });
+
     //update -> put
 
-    app.put("/courses/:id", async(req, res) => {
+    app.put("/courses/:id", async (req, res) => {
       const id = req.params.id;
-      const filter = {_id: new ObjectId(id)}
-      const options = {upsert: true};
+      const filter = { _id: new ObjectId(id) };
+      const options = { upsert: true };
       const updatedCourse = req.body;
       const updatedDoc = {
-        $set: updatedCourse
-
-      }
-      const result = await courseCollection.updateOne(filter, updatedDoc, options);
+        $set: updatedCourse,
+      };
+      const result = await courseCollection.updateOne(
+        filter,
+        updatedDoc,
+        options
+      );
       res.send(result);
-    })
+    });
 
     //Delete Operation
     app.delete("/courses/:id", async (req, res) => {
@@ -88,6 +128,19 @@ async function run() {
       const query = { _id: new ObjectId(id) };
       const result = await courseCollection.deleteOne(query);
       res.send(result);
+    });
+
+    app.delete("/enrollments/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await enrollmentCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
+
+      if (result.deletedCount === 0) {
+        return res.status(404).send({ message: "Enrollment not found" });
+      }
+
+      res.send({ message: "Enrollment removed successfully", ...result });
     });
 
     // Send a ping to confirm a successful connection
