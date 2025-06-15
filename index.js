@@ -42,6 +42,23 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/courses/:id", async (req, res) => {
+      const id = req.params.id;
+
+      try {
+        const query = { _id: new ObjectId(id) };
+        const course = await courseCollection.findOne(query);
+
+        if (!course) {
+          return res.status(404).send({ message: "Course not found" });
+        }
+
+        res.send(course);
+      } catch (error) {
+        res.status(500).send({ message: "Invalid course ID" });
+      }
+    });
+
     app.post("/courses", async (req, res) => {
       const newCourse = req.body;
       console.log("Received course:", newCourse);
@@ -50,13 +67,28 @@ async function run() {
       res.send({ insertedId: result.insertedId });
     });
 
-    //Delete Operation
-    app.delete('/courses/:id', async(req, res) => {
+    //update -> put
+
+    app.put("/courses/:id", async(req, res) => {
       const id = req.params.id;
-      const query = {_id: new ObjectId(id)}
-      const result = await courseCollection.deleteOne(query);
+      const filter = {_id: new ObjectId(id)}
+      const options = {upsert: true};
+      const updatedCourse = req.body;
+      const updatedDoc = {
+        $set: updatedCourse
+
+      }
+      const result = await courseCollection.updateOne(filter, updatedDoc, options);
       res.send(result);
     })
+
+    //Delete Operation
+    app.delete("/courses/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await courseCollection.deleteOne(query);
+      res.send(result);
+    });
 
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
