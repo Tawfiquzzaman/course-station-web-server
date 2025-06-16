@@ -25,21 +25,61 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
+    // Connect the client to the server
     // await client.connect();
 
     const courseCollection = client.db("courseDB").collection("courses");
-    const enrollmentCollection = client.db("courseDB").collection("enrollments");
+    const enrollmentCollection = client
+      .db("courseDB")
+      .collection("enrollments");
 
     app.get("/courses", async (req, res) => {
-      const { creatorEmail } = req.query;
+      const { creatorEmail, latest, popular } = req.query;
+
+      if (popular === "true") {
+        try {
+          const topEnrollments = await enrollmentCollection
+            .aggregate([
+              {
+                $group: {
+                  _id: "$courseId",
+                  count: { $sum: 1 },
+                },
+              },
+              { $sort: { count: -1 } },
+              { $limit: 6 },
+            ])
+            .toArray();
+
+          const topCourseIds = topEnrollments.map(
+            (item) => new ObjectId(item._id)
+          );
+
+          const popularCourses = await courseCollection
+            .find({ _id: { $in: topCourseIds } })
+            .toArray();
+
+          return res.send(popularCourses);
+        } catch (error) {
+          console.error("Error fetching popular courses:", error);
+          return res
+            .status(500)
+            .send({ message: "Error fetching popular courses" });
+        }
+      }
 
       let query = {};
       if (creatorEmail) {
         query.creatorEmail = creatorEmail;
       }
 
-      const result = await courseCollection.find(query).toArray();
+      const cursor = courseCollection.find(query);
+
+      if (latest === "true") {
+        cursor.sort({ createdAt: -1 }).limit(6);
+      }
+
+      const result = await cursor.toArray();
       res.send(result);
     });
 
@@ -70,6 +110,58 @@ async function run() {
       res.send(enrollments);
     });
 
+    //latest
+    app.get("/courses", async (req, res) => {
+      const { creatorEmail, latest, popular } = req.query;
+
+      if (popular === "true") {
+        try {
+          const topEnrollments = await enrollmentCollection
+            .aggregate([
+              {
+                $group: {
+                  _id: "$courseId",
+                  count: { $sum: 1 },
+                },
+              },
+              { $sort: { count: -1 } },
+              { $limit: 6 },
+            ])
+            .toArray();
+
+          const topCourseIds = topEnrollments.map(
+            (item) => new ObjectId(item._id)
+          );
+
+          // Fetch course details
+          const popularCourses = await courseCollection
+            .find({ _id: { $in: topCourseIds } })
+            .toArray();
+
+          return res.send(popularCourses);
+        } catch (error) {
+          console.error("Error fetching popular courses:", error);
+          return res
+            .status(500)
+            .send({ message: "Error fetching popular courses" });
+        }
+      }
+
+      let query = {};
+      if (creatorEmail) {
+        query.creatorEmail = creatorEmail;
+      }
+
+      const cursor = courseCollection.find(query);
+
+      if (latest === "true") {
+        cursor.sort({ createdAt: -1 }).limit(6);
+      }
+
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
     // Delete
     app.delete("/enrollments/:id", async (req, res) => {
       const id = req.params.id;
@@ -80,7 +172,10 @@ async function run() {
     });
 
     app.post("/courses", async (req, res) => {
-      const newCourse = req.body;
+      const newCourse = {
+        ...req.body,
+        createdAt: new Date(),
+      };
       console.log("Received course:", newCourse);
 
       const result = await courseCollection.insertOne(newCourse);
