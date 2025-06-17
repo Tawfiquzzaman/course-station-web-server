@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const app = express();
+const jwt = require("jsonwebtoken");
 const port = process.env.PORT || 3000;
 
 //middleware
@@ -14,7 +15,6 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.b30s3ik.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
-
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -22,6 +22,21 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   },
 });
+
+const verifyJWT = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader)
+    return res.status(401).send({ message: "Unauthorized access" });
+
+  const token = authHeader.split(" ")[1];
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(403).send({ message: "Forbidden access" });
+
+    req.decoded = decoded; // add decoded info to request
+    next();
+  });
+};
 
 async function run() {
   try {
@@ -33,55 +48,63 @@ async function run() {
       .db("courseDB")
       .collection("enrollments");
 
-    app.get("/courses", async (req, res) => {
-      const { creatorEmail, latest, popular } = req.query;
-
-      if (popular === "true") {
-        try {
-          const topEnrollments = await enrollmentCollection
-            .aggregate([
-              {
-                $group: {
-                  _id: "$courseId",
-                  count: { $sum: 1 },
-                },
-              },
-              { $sort: { count: -1 } },
-              { $limit: 6 },
-            ])
-            .toArray();
-
-          const topCourseIds = topEnrollments.map(
-            (item) => new ObjectId(item._id)
-          );
-
-          const popularCourses = await courseCollection
-            .find({ _id: { $in: topCourseIds } })
-            .toArray();
-
-          return res.send(popularCourses);
-        } catch (error) {
-          console.error("Error fetching popular courses:", error);
-          return res
-            .status(500)
-            .send({ message: "Error fetching popular courses" });
-        }
-      }
-
-      let query = {};
-      if (creatorEmail) {
-        query.creatorEmail = creatorEmail;
-      }
-
-      const cursor = courseCollection.find(query);
-
-      if (latest === "true") {
-        cursor.sort({ createdAt: -1 }).limit(6);
-      }
-
-      const result = await cursor.toArray();
-      res.send(result);
+    //jwt token related API
+    app.post("/jwt", async (req, res) => {
+      const { email } = req.body;
+      const user = { email };
+      const token = jwt.sign(user, process.env.JWT_SECRET, { expiresIn: "1h" });
+      res.send({ token });
     });
+
+    // app.get("/courses", async (req, res) => {
+    //   const { creatorEmail, latest, popular } = req.query;
+
+    //   if (popular === "true") {
+    //     try {
+    //       const topEnrollments = await enrollmentCollection
+    //         .aggregate([
+    //           {
+    //             $group: {
+    //               _id: "$courseId",
+    //               count: { $sum: 1 },
+    //             },
+    //           },
+    //           { $sort: { count: -1 } },
+    //           { $limit: 6 },
+    //         ])
+    //         .toArray();
+
+    //       const topCourseIds = topEnrollments.map(
+    //         (item) => new ObjectId(item._id)
+    //       );
+
+    //       const popularCourses = await courseCollection
+    //         .find({ _id: { $in: topCourseIds } })
+    //         .toArray();
+
+    //       return res.send(popularCourses);
+    //     } catch (error) {
+    //       console.error("Error fetching popular courses:", error);
+    //       return res
+    //         .status(500)
+    //         .send({ message: "Error fetching popular courses" });
+    //     }
+    //   }
+
+    //   let query = {};
+    //   if (creatorEmail) {
+    //     query.creatorEmail = creatorEmail;
+    //   }
+
+    //   const cursor = courseCollection.find(query);
+
+    //   if (latest === "true") {
+    //     cursor.sort({ createdAt: -1 }).limit(6);
+    //   }
+
+    //   const result = await cursor.toArray();
+    //   res.send(result);
+    // });
 
     app.get("/courses/:id", async (req, res) => {
       const id = req.params.id;
@@ -110,7 +133,19 @@ async function run() {
       res.send(enrollments);
     });
 
-    //latest
+    app.get("/courses/:id/seats", async (req, res) => {
+      const id = req.params.id;
+      const course = await courseCollection.findOne({ _id: new ObjectId(id) });
+      if (!course) return res.status(404).send({ message: "Course not found" });
+
+      const enrolled = await enrollmentCollection.countDocuments({
+        courseId: id,
+      });
+      const seatsLeft = course.totalSeats - enrolled;
+
+      res.send({ seatsLeft });
+    });
+
     app.get("/courses", async (req, res) => {
       const { creatorEmail, latest, popular } = req.query;
 
@@ -162,6 +197,26 @@ async function run() {
       res.send(result);
     });
 
+    //new added
+    app.get("/enrollments/check", async (req, res) => {
+      const { userEmail, courseId } = req.query;
+
+      if (!userEmail || !courseId) {
+        return res.status(400).send({ message: "Missing query parameters" });
+      }
+
+      const enrollment = await enrollmentCollection.findOne({
+        userEmail,
+        courseId,
+      });
+
+      if (enrollment) {
+        return res.send({ enrolled: true, enrollmentId: enrollment._id });
+      } else {
+        return res.send({ enrolled: false });
+      }
+    });
+
     // Delete
     app.delete("/enrollments/:id", async (req, res) => {
       const id = req.params.id;
@@ -172,46 +227,55 @@ async function run() {
     });
 
     app.post("/courses", async (req, res) => {
+      const totalSeats = parseInt(req.body.totalSeats) || 2;
+
       const newCourse = {
         ...req.body,
         createdAt: new Date(),
+        totalSeats, // always a number
       };
-      console.log("Received course:", newCourse);
 
       const result = await courseCollection.insertOne(newCourse);
       res.send({ insertedId: result.insertedId });
     });
 
     app.post("/enrollments", async (req, res) => {
-      const enrollment = req.body;
-      console.log("Received enrollment:", enrollment);
+      const { userEmail, courseId, courseName, courseBanner } = req.body;
 
-      if (
-        !enrollment.userEmail ||
-        !enrollment.courseId ||
-        !enrollment.courseName
-      ) {
+      if (!userEmail || !courseId || !courseName) {
         return res.status(400).send({ message: "Missing required fields" });
       }
 
-      enrollment.enrolledDate = new Date(); // Set enrollment date
-      const result = await enrollmentCollection.insertOne(enrollment);
-      res.send({ insertedId: result.insertedId });
-    });
+      const course = await courseCollection.findOne({
+        _id: new ObjectId(courseId),
+      });
+      if (!course) return res.status(404).send({ message: "Course not found" });
 
-    app.post("/enrollments", async (req, res) => {
-      const { userEmail, courseId } = req.body;
-
-      const exists = await enrollmentsCollection.findOne({
-        userEmail,
+      const enrollmentCount = await enrollmentCollection.countDocuments({
         courseId,
       });
 
-      if (exists) {
-        return res.status(409).json({ message: "Already enrolled" });
+      if (enrollmentCount >= course.totalSeats) {
+        return res.status(409).send({ message: "No seats left" });
       }
 
-      const result = await enrollmentsCollection.insertOne(req.body);
+      const exists = await enrollmentCollection.findOne({
+        userEmail,
+        courseId,
+      });
+      if (exists) {
+        return res.status(409).send({ message: "Already enrolled" });
+      }
+
+      const enrollment = {
+        userEmail,
+        courseId,
+        courseName,
+        courseBanner,
+        enrolledDate: new Date(),
+      };
+
+      const result = await enrollmentCollection.insertOne(enrollment);
       res.status(201).json({ insertedId: result.insertedId });
     });
 
