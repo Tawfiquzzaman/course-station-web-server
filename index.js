@@ -217,6 +217,12 @@ async function run() {
       }
     });
 
+    app.get("/enrollments/count/:userEmail", async (req, res) => {
+      const userEmail = req.params.userEmail;
+      const count = await enrollmentCollection.countDocuments({ userEmail });
+      res.send({ count });
+    });
+
     // Delete
     app.delete("/enrollments/:id", async (req, res) => {
       const id = req.params.id;
@@ -277,6 +283,45 @@ async function run() {
 
       const result = await enrollmentCollection.insertOne(enrollment);
       res.status(201).json({ insertedId: result.insertedId });
+    });
+
+    app.post("/enroll", async (req, res) => {
+      const { userEmail, courseId } = req.body;
+
+      try {
+        const count = await enrollmentCollection.countDocuments({ userEmail });
+
+        if (count >= 3) {
+          return res.status(409).json({
+            success: false,
+            message: "You cannot enroll in more than 3 courses",
+          });
+        }
+
+        const alreadyEnrolled = await enrollmentCollection.findOne({
+          userEmail,
+          courseId,
+        });
+        if (alreadyEnrolled) {
+          return res.status(400).json({
+            success: false,
+            message: "You are already enrolled in this course.",
+          });
+        }
+
+        const result = await enrollmentCollection.insertOne({
+          userEmail,
+          courseId,
+        });
+        res.status(201).json({
+          success: true,
+          message: "Enrollment successful.",
+          insertedId: result.insertedId,
+        });
+      } catch (error) {
+        console.error("Enrollment error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+      }
     });
 
     //update -> put
