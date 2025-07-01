@@ -160,7 +160,7 @@ async function run() {
                 },
               },
               { $sort: { count: -1 } },
-              { $limit: 6 },
+              { $limit: 8 },
             ])
             .toArray();
 
@@ -190,7 +190,7 @@ async function run() {
       const cursor = courseCollection.find(query);
 
       if (latest === "true") {
-        cursor.sort({ createdAt: -1 }).limit(6);
+        cursor.sort({ createdAt: -1 }).limit(8);
       }
 
       const result = await cursor.toArray();
